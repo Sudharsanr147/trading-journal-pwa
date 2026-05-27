@@ -491,14 +491,14 @@
 <!-- Firebase SDK -->
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getDatabase, ref, onValue, push, set, remove, update }
+import { getDatabase, ref, onValue, push, set, remove, update, goOnline }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
 // ── Firebase config ──
 const firebaseConfig = {
   apiKey: "AIzaSyCXD2xzNHTaCOxBZv6EUG1pUWCoOwInsQw",
   authDomain: "tradingjournalseng.firebaseapp.com",
-  databaseURL: "https://tradingjournalseng-default-rtdb.firebaseio.com",
+  databaseURL: "https://tradingjournalseng-default-rtdb.asia-southeast1.firebasedatabase.app",
   projectId: "tradingjournalseng",
   storageBucket: "tradingjournalseng.firebasestorage.app",
   messagingSenderId: "157189423562",
@@ -508,21 +508,32 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db  = getDatabase(app);
 
-// ── Connection timeout: show error if no data in 10s ──
+// ── Monitor actual Firebase connection state ──
+const connectedRef = ref(db, '.info/connected');
+onValue(connectedRef, snap => {
+  if (snap.val() === true) {
+    setSyncState('online');
+    // Firebase is connected — data listeners will fire shortly
+  } else {
+    // Not yet connected or disconnected
+    setSyncState('syncing');
+  }
+});
+
+// ── Connection timeout: show error if no data in 30s ──
 const connTimeout = setTimeout(() => {
   if (!rulesLoaded || !tradesLoaded) {
     setSyncState('error');
     const ol = document.getElementById('loadingOverlay');
-    ol.querySelector('p').textContent = 'CHECK FIREBASE RULES';
+    ol.querySelector('p').textContent = 'DB RULES BLOCKING ACCESS';
     ol.querySelector('.spinner').style.borderTopColor = '#f85149';
-    // Still allow using app with empty data after timeout
     setTimeout(() => {
       rulesLoaded = true; tradesLoaded = true;
       checkLoaded();
-      showToast('⚠️ Firebase not reachable — check DB rules');
+      showToast('⚠️ Set DB rules .read/.write = true & Publish');
     }, 3000);
   }
-}, 10000);
+}, 30000);
 
 // ── Refs ──
 const rulesRef  = ref(db, 'rules');
