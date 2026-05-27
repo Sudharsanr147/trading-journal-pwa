@@ -1,11 +1,11 @@
-const CACHE = 'tradejournal-v1';
+const CACHE = 'tradejournal-v3';
+const BASE  = '/trading-journal-pwa';
 const ASSETS = [
-  './',
-  './index.html',
-  './manifest.json',
-  './icons/icon-192.png',
-  './icons/icon-512.png',
-  'https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap'
+  BASE + '/',
+  BASE + '/index.html',
+  BASE + '/manifest.json',
+  BASE + '/icons/icon-192.png',
+  BASE + '/icons/icon-512.png',
 ];
 
 self.addEventListener('install', e => {
@@ -25,13 +25,22 @@ self.addEventListener('activate', e => {
 });
 
 self.addEventListener('fetch', e => {
-  // Let Firebase requests go straight to network
-  if (e.request.url.includes('firebaseio.com') ||
-      e.request.url.includes('googleapis.com/firebase') ||
-      e.request.url.includes('gstatic.com/firebasejs')) {
-    return;
-  }
+  // Pass through Firebase + Google API calls
+  const url = e.request.url;
+  if (url.includes('firebasedatabase.app') ||
+      url.includes('googleapis.com') ||
+      url.includes('gstatic.com') ||
+      url.includes('fonts.')) return;
+
   e.respondWith(
-    caches.match(e.request).then(cached => cached || fetch(e.request).catch(() => cached))
+    caches.match(e.request).then(cached => {
+      return cached || fetch(e.request).then(resp => {
+        // Cache successful GET responses
+        if (e.request.method === 'GET' && resp.status === 200) {
+          caches.open(CACHE).then(c => c.put(e.request, resp.clone()));
+        }
+        return resp;
+      }).catch(() => cached);
+    })
   );
 });
