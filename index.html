@@ -498,6 +498,7 @@ import { getDatabase, ref, onValue, push, set, remove, update }
 const firebaseConfig = {
   apiKey: "AIzaSyCXD2xzNHTaCOxBZv6EUG1pUWCoOwInsQw",
   authDomain: "tradingjournalseng.firebaseapp.com",
+  databaseURL: "https://tradingjournalseng-default-rtdb.firebaseio.com",
   projectId: "tradingjournalseng",
   storageBucket: "tradingjournalseng.firebasestorage.app",
   messagingSenderId: "157189423562",
@@ -506,6 +507,22 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const db  = getDatabase(app);
+
+// ── Connection timeout: show error if no data in 10s ──
+const connTimeout = setTimeout(() => {
+  if (!rulesLoaded || !tradesLoaded) {
+    setSyncState('error');
+    const ol = document.getElementById('loadingOverlay');
+    ol.querySelector('p').textContent = 'CHECK FIREBASE RULES';
+    ol.querySelector('.spinner').style.borderTopColor = '#f85149';
+    // Still allow using app with empty data after timeout
+    setTimeout(() => {
+      rulesLoaded = true; tradesLoaded = true;
+      checkLoaded();
+      showToast('⚠️ Firebase not reachable — check DB rules');
+    }, 3000);
+  }
+}, 10000);
 
 // ── Refs ──
 const rulesRef  = ref(db, 'rules');
@@ -531,6 +548,7 @@ function setSyncState(state) {
 let rulesLoaded = false, tradesLoaded = false;
 function checkLoaded() {
   if (rulesLoaded && tradesLoaded) {
+    clearTimeout(connTimeout);
     const ol = document.getElementById('loadingOverlay');
     ol.classList.add('hidden');
     setTimeout(() => ol.style.display = 'none', 400);
