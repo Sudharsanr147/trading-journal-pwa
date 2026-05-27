@@ -488,99 +488,93 @@
 <!-- TOAST -->
 <div class="toast" id="toast"></div>
 
-<!-- Firebase SDK -->
-<script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getDatabase, ref, onValue, push, set, remove, update, goOnline }
-  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+<!-- Firebase via REST API - no SDK, no connection delays -->
+<script>
+// ══ Firebase REST Config ══
+const DB = 'https://tradingjournalseng-default-rtdb.asia-southeast1.firebasedatabase.app';
+const API_KEY = 'AIzaSyCXD2xzNHTaCOxBZv6EUG1pUWCoOwInsQw';
 
-// ── Firebase config ──
-const firebaseConfig = {
-  apiKey: "AIzaSyCXD2xzNHTaCOxBZv6EUG1pUWCoOwInsQw",
-  authDomain: "tradingjournalseng.firebaseapp.com",
-  databaseURL: "https://tradingjournalseng-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "tradingjournalseng",
-  storageBucket: "tradingjournalseng.firebasestorage.app",
-  messagingSenderId: "157189423562",
-  appId: "1:157189423562:web:c1098bfadd1f54f4150f33"
-};
-
-const app = initializeApp(firebaseConfig);
-const db  = getDatabase(app);
-
-// ── Monitor actual Firebase connection state ──
-const connectedRef = ref(db, '.info/connected');
-onValue(connectedRef, snap => {
-  if (snap.val() === true) {
-    setSyncState('online');
-    // Firebase is connected — data listeners will fire shortly
-  } else {
-    // Not yet connected or disconnected
-    setSyncState('syncing');
-  }
-});
-
-// ── Connection timeout: show error if no data in 30s ──
-const connTimeout = setTimeout(() => {
-  if (!rulesLoaded || !tradesLoaded) {
-    setSyncState('error');
-    const ol = document.getElementById('loadingOverlay');
-    ol.querySelector('p').textContent = 'DB RULES BLOCKING ACCESS';
-    ol.querySelector('.spinner').style.borderTopColor = '#f85149';
-    setTimeout(() => {
-      rulesLoaded = true; tradesLoaded = true;
-      checkLoaded();
-      showToast('⚠️ Set DB rules .read/.write = true & Publish');
-    }, 3000);
-  }
-}, 30000);
-
-// ── Refs ──
-const rulesRef  = ref(db, 'rules');
-const tradesRef = ref(db, 'trades');
-
-// ── In-memory store (keyed by Firebase push key) ──
-let rulesData  = {};   // { fbKey: { text, order } }
-let tradesData = {};   // { fbKey: { ...fields } }
+// ── In-memory store ──
+let rulesData  = {};
+let tradesData = {};
 let editRuleKey  = null;
 let editTradeKey = null;
+let pollTimer    = null;
+
+// ── REST helpers ──
+async function fbGet(path) {
+  const r = await fetch(`${DB}/${path}.json?auth=${API_KEY}`);
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+async function fbPut(path, data) {
+  const r = await fetch(`${DB}/${path}.json?auth=${API_KEY}`, {
+    method: 'PUT', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(data)
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+async function fbPost(path, data) {
+  const r = await fetch(`${DB}/${path}.json?auth=${API_KEY}`, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(data)
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+async function fbDelete(path) {
+  const r = await fetch(`${DB}/${path}.json?auth=${API_KEY}`, { method: 'DELETE' });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
 
 // ── Sync UI ──
 function setSyncState(state) {
   const dot   = document.getElementById('syncDot');
   const label = document.getElementById('syncLabel');
   const bar   = document.getElementById('syncBar');
-  dot.className = 'sync-dot ' + state;
-  label.textContent = state === 'online' ? 'LIVE' : state === 'syncing' ? 'SYNC' : state === 'error' ? 'ERR' : '--';
-  bar.className = 'sync-bar ' + (state === 'syncing' ? 'syncing' : '');
+  dot.className   = 'sync-dot ' + state;
+  label.textContent = state==='online' ? 'LIVE' : state==='syncing' ? 'SYNC' : state==='error' ? 'ERR' : '--';
+  bar.className   = 'sync-bar ' + (state==='syncing' ? 'syncing' : '');
 }
 
-// ── Hide loader once data arrives ──
-let rulesLoaded = false, tradesLoaded = false;
-function checkLoaded() {
-  if (rulesLoaded && tradesLoaded) {
-    clearTimeout(connTimeout);
+// ── Load all data ──
+async function loadAll() {
+  setSyncState('syncing');
+  try {
+    const [r, t] = await Promise.all([fbGet('rules'), fbGet('trades')]);
+    rulesData  = r || {};
+    tradesData = t || {};
+    renderRules();
+    renderTrades();
+    setSyncState('online');
+    // Hide loader
     const ol = document.getElementById('loadingOverlay');
     ol.classList.add('hidden');
     setTimeout(() => ol.style.display = 'none', 400);
-    setSyncState('online');
+    // Poll every 15s to pick up changes from other devices
+    clearInterval(pollTimer);
+    pollTimer = setInterval(async () => {
+      try {
+        const [r2, t2] = await Promise.all([fbGet('rules'), fbGet('trades')]);
+        rulesData  = r2 || {};
+        tradesData = t2 || {};
+        renderRules();
+        renderTrades();
+      } catch(e) {}
+    }, 15000);
+  } catch(e) {
+    setSyncState('error');
+    showToast('❌ Cannot reach Firebase — check internet');
+    // Still hide loader and allow offline view
+    setTimeout(() => {
+      const ol = document.getElementById('loadingOverlay');
+      ol.classList.add('hidden');
+      setTimeout(() => ol.style.display = 'none', 400);
+    }, 2000);
   }
 }
-
-// ── Real-time listeners ──
-onValue(rulesRef, snap => {
-  rulesData = snap.val() || {};
-  rulesLoaded = true;
-  renderRules();
-  checkLoaded();
-}, err => { setSyncState('error'); showToast('⚠️ Rules sync error'); });
-
-onValue(tradesRef, snap => {
-  tradesData = snap.val() || {};
-  tradesLoaded = true;
-  renderTrades();
-  checkLoaded();
-}, err => { setSyncState('error'); showToast('⚠️ Trades sync error'); });
 
 // ════════════════════════════
 //  RULES
@@ -617,23 +611,28 @@ window.saveRule = async function() {
   setSyncState('syncing');
   try {
     if (editRuleKey) {
-      await update(ref(db, 'rules/' + editRuleKey), { text: txt });
+      await fbPut('rules/' + editRuleKey, { text: txt, order: rulesData[editRuleKey]?.order || Date.now() });
+      rulesData[editRuleKey] = { text: txt, order: rulesData[editRuleKey]?.order || Date.now() };
     } else {
       const order = Date.now();
-      await push(rulesRef, { text: txt, order });
+      const res = await fbPost('rules', { text: txt, order });
+      rulesData[res.name] = { text: txt, order };
     }
     setSyncState('online');
     closeModal('ruleModal');
+    renderRules();
     showToast('✅ Rule saved');
-  } catch(e) { setSyncState('error'); showToast('❌ Save failed'); }
+  } catch(e) { setSyncState('error'); showToast('❌ Save failed: ' + e.message); }
 };
 
 window.deleteRule = function(key) {
   showConfirm('Delete this rule?', async () => {
     setSyncState('syncing');
     try {
-      await remove(ref(db, 'rules/' + key));
+      await fbDelete('rules/' + key);
+      delete rulesData[key];
       setSyncState('online');
+      renderRules();
       showToast('🗑️ Rule deleted');
     } catch(e) { setSyncState('error'); showToast('❌ Delete failed'); }
   });
@@ -667,7 +666,7 @@ window.renderTrades = function() {
 
   tbody.innerHTML = entries.map(([key, t]) => {
     const isProfit = t.pl === 'Profit';
-    const sign = isProfit ? '+' : '-';
+    const sign     = isProfit ? '+' : '-';
     const amtColor = isProfit ? 'var(--green)' : 'var(--red)';
     const pillPL   = t.pl   ? `<span class="pill ${isProfit?'pill-p':'pill-l'}">${t.pl}</span>` : '—';
     const pillStip = t.stip ? `<span class="pill ${t.stip==='Yes'?'pill-y':'pill-n'}">${t.stip}</span>` : '—';
@@ -738,22 +737,27 @@ window.saveTrade = async function() {
   setSyncState('syncing');
   try {
     if (editTradeKey) {
-      await set(ref(db, 'trades/' + editTradeKey), trade);
+      await fbPut('trades/' + editTradeKey, trade);
+      tradesData[editTradeKey] = trade;
     } else {
-      await push(tradesRef, trade);
+      const res = await fbPost('trades', trade);
+      tradesData[res.name] = trade;
     }
     setSyncState('online');
     closeModal('tradeModal');
+    renderTrades();
     showToast('✅ Trade saved');
-  } catch(e) { setSyncState('error'); showToast('❌ Save failed'); }
+  } catch(e) { setSyncState('error'); showToast('❌ Save failed: ' + e.message); }
 };
 
 window.deleteTrade = function(key) {
   showConfirm('Delete this trade entry?', async () => {
     setSyncState('syncing');
     try {
-      await remove(ref(db, 'trades/' + key));
+      await fbDelete('trades/' + key);
+      delete tradesData[key];
       setSyncState('online');
+      renderTrades();
       showToast('🗑️ Trade deleted');
     } catch(e) { setSyncState('error'); showToast('❌ Delete failed'); }
   });
@@ -795,16 +799,17 @@ window.showToast = function(msg) {
   toastTimer = setTimeout(() => t.classList.remove('show'), 2500);
 };
 
-window.today    = () => new Date().toISOString().split('T')[0];
-window.fmtDate  = d => { if(!d) return '—'; const [y,m,dd]=d.split('-'); return `${dd}/${m}/${y.slice(2)}`; };
-window.escHtml  = s => s ? s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') : '';
+window.today   = () => new Date().toISOString().split('T')[0];
+window.fmtDate = d => { if(!d) return '—'; const [y,m,dd]=d.split('-'); return `${dd}/${m}/${y.slice(2)}`; };
+window.escHtml = s => s ? s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') : '';
 
-// ── Service Worker registration ──
+// ── Service Worker ──
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
-  });
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(()=>{}));
 }
+
+// ── Start ──
+loadAll();
 </script>
 </body>
 </html>
