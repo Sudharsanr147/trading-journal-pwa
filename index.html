@@ -450,7 +450,41 @@
 
   /* ── TAB SWIPE CONTAINER ── */
   .content { touch-action: pan-y; }
-  .toast {
+
+  /* ── DRAG HANDLE ── */
+  .drag-handle {
+    font-size: 20px; color: var(--border); cursor: grab;
+    padding: 2px 8px 2px 0; flex-shrink: 0; line-height: 1;
+    touch-action: none; user-select: none;
+  }
+  .rule-card.dragging { opacity: .4; background: var(--surface2); border-style: dashed; }
+  .rule-card.drag-over-top    { border-top: 2px solid var(--accent); }
+  .rule-card.drag-over-bottom { border-bottom: 2px solid var(--accent); }
+
+  /* ── FORMAT ROW & SWATCHES ── */
+  .fmt-row { display: flex; gap: 10px; }
+  .color-swatches { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+  .swatch {
+    width: 28px; height: 28px; border-radius: 50%;
+    border: 2px solid transparent; cursor: pointer;
+    transition: transform .15s, border-color .15s;
+    flex-shrink: 0; position: relative;
+  }
+  .swatch.active { border-color: #fff; transform: scale(1.25); }
+  .swatch-custom {
+    background: var(--surface2); border-color: var(--border);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; overflow: hidden;
+  }
+
+  /* ── RULE PREVIEW ── */
+  .rule-preview {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius); padding: 10px 14px;
+    margin-bottom: 4px; min-height: 42px; line-height: 1.5;
+    word-break: break-word; transition: all .2s;
+  }
     position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(80px);
     background: var(--surface2); border: 1px solid var(--border);
     border-radius: 24px; padding: 10px 20px;
@@ -533,9 +567,50 @@
   <div class="modal">
     <h2 id="ruleModalTitle">Add Rule</h2>
     <div class="form-group">
-      <label>Rule</label>
+      <label>Rule Text</label>
       <textarea id="ruleText" placeholder="Enter your trading rule..."></textarea>
     </div>
+    <!-- Formatting row -->
+    <div class="fmt-row">
+      <div class="form-group" style="flex:1">
+        <label>Font Size</label>
+        <select id="ruleFontSize">
+          <option value="13">Small (13)</option>
+          <option value="15" selected>Normal (15)</option>
+          <option value="17">Medium (17)</option>
+          <option value="19">Large (19)</option>
+          <option value="22">XL (22)</option>
+        </select>
+      </div>
+      <div class="form-group" style="flex:1">
+        <label>Style</label>
+        <select id="ruleFontStyle">
+          <option value="normal">Normal</option>
+          <option value="bold">Bold</option>
+          <option value="italic">Italic</option>
+          <option value="bold-italic">Bold Italic</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Text Colour</label>
+      <div class="color-swatches" id="colorSwatches">
+        <div class="swatch active" data-color="#e6edf3" style="background:#e6edf3" title="White"></div>
+        <div class="swatch" data-color="#f0a500" style="background:#f0a500" title="Amber"></div>
+        <div class="swatch" data-color="#3fb950" style="background:#3fb950" title="Green"></div>
+        <div class="swatch" data-color="#f85149" style="background:#f85149" title="Red"></div>
+        <div class="swatch" data-color="#58a6ff" style="background:#58a6ff" title="Blue"></div>
+        <div class="swatch" data-color="#d2a8ff" style="background:#d2a8ff" title="Purple"></div>
+        <div class="swatch" data-color="#ffa657" style="background:#ffa657" title="Orange"></div>
+        <div class="swatch" data-color="#8b949e" style="background:#8b949e" title="Grey"></div>
+        <div class="swatch swatch-custom" data-color="custom" title="Custom colour">
+          <input type="color" id="ruleColorPicker" value="#e6edf3" style="opacity:0;position:absolute;width:100%;height:100%;cursor:pointer;border:none;">
+          🎨
+        </div>
+      </div>
+    </div>
+    <!-- Live preview -->
+    <div class="rule-preview" id="rulePreview">Preview text</div>
     <div class="modal-actions">
       <button class="btn-cancel" onclick="closeModal('ruleModal')">Cancel</button>
       <button class="btn-save" onclick="saveRule()">Save</button>
@@ -732,6 +807,8 @@ async function loadAll() {
 // ════════════════════════════
 //  RULES
 // ════════════════════════════
+let selectedColor = '#e6edf3';
+
 window.renderRules = function() {
   const list = document.getElementById('rulesList');
   const entries = Object.entries(rulesData).sort((a,b) => (a[1].order||0) - (b[1].order||0));
@@ -739,52 +816,113 @@ window.renderRules = function() {
     list.innerHTML = '<div class="empty-state"><div class="big">📜</div>No rules yet.<br>Add your first trading rule!</div>';
     return;
   }
-  list.innerHTML = entries.map(([key, r], i) => `
-    <div class="rule-card" onclick="toggleRuleCard(this)" data-key="${key}">
+  list.innerHTML = entries.map(([key, r], i) => {
+    const fs   = r.fontSize  || 15;
+    const fc   = r.fontColor || '#e6edf3';
+    const fw   = (r.fontStyle==='bold'||r.fontStyle==='bold-italic') ? '700' : '400';
+    const fi   = (r.fontStyle==='italic'||r.fontStyle==='bold-italic') ? 'italic' : 'normal';
+    return `
+    <div class="rule-card" data-key="${key}"
+         onclick="toggleRuleCard(this)"
+         draggable="true"
+         ondragstart="onDragStart(event,'${key}')"
+         ondragover="onDragOver(event)"
+         ondragleave="onDragLeave(event)"
+         ondrop="onDrop(event,'${key}')"
+         ondragend="onDragEnd(event)">
+      <div class="drag-handle" ontouchstart="startTouchDrag(event,this.closest('.rule-card'))" onclick="event.stopPropagation()">⠿</div>
       <div class="rule-num">${i+1}.</div>
-      <div class="rule-text">${escHtml(r.text)}</div>
+      <div class="rule-text" style="font-size:${fs}px;color:${fc};font-weight:${fw};font-style:${fi}">${escHtml(r.text)}</div>
       <div class="rule-actions">
         <button class="icon-btn" onclick="event.stopPropagation();openRuleModal('${key}')">✏️</button>
         <button class="icon-btn" onclick="event.stopPropagation();deleteRule('${key}')">🗑️</button>
       </div>
-    </div>
-  `).join('');
+    </div>`
+  }).join('');
 };
 
 window.toggleRuleCard = function(el) {
   const wasActive = el.classList.contains('active-card');
-  // Close all
   document.querySelectorAll('.rule-card.active-card').forEach(c => c.classList.remove('active-card'));
-  // Toggle current
   if (!wasActive) el.classList.add('active-card');
 };
-
-// Tap outside rules list closes any open card
 document.addEventListener('click', e => {
   if (!e.target.closest('.rule-card')) {
     document.querySelectorAll('.rule-card.active-card').forEach(c => c.classList.remove('active-card'));
   }
 });
 
+// ── Rule Modal ──
 window.openRuleModal = function(key = null) {
   editRuleKey = key;
   document.getElementById('ruleModalTitle').textContent = key ? 'Edit Rule' : 'Add Rule';
-  document.getElementById('ruleText').value = key ? (rulesData[key]?.text || '') : '';
+  const r = key ? (rulesData[key] || {}) : {};
+  document.getElementById('ruleText').value = r.text || '';
+  document.getElementById('ruleFontSize').value  = r.fontSize  || '15';
+  document.getElementById('ruleFontStyle').value = r.fontStyle || 'normal';
+  selectedColor = r.fontColor || '#e6edf3';
+  // Update swatches
+  document.querySelectorAll('.swatch').forEach(s => {
+    s.classList.toggle('active', s.dataset.color === selectedColor);
+  });
+  document.getElementById('ruleColorPicker').value = selectedColor.startsWith('#') ? selectedColor : '#e6edf3';
+  updateRulePreview();
   document.getElementById('ruleModal').classList.add('open');
 };
+
+function updateRulePreview() {
+  const txt  = document.getElementById('ruleText').value || 'Preview text';
+  const fs   = document.getElementById('ruleFontSize').value;
+  const styl = document.getElementById('ruleFontStyle').value;
+  const fw   = (styl==='bold'||styl==='bold-italic') ? '700' : '400';
+  const fi   = (styl==='italic'||styl==='bold-italic') ? 'italic' : 'normal';
+  const prev = document.getElementById('rulePreview');
+  prev.textContent   = txt;
+  prev.style.fontSize   = fs + 'px';
+  prev.style.color      = selectedColor;
+  prev.style.fontWeight = fw;
+  prev.style.fontStyle  = fi;
+}
+
+// Live preview on input change
+document.getElementById('ruleText').addEventListener('input', updateRulePreview);
+document.getElementById('ruleFontSize').addEventListener('change', updateRulePreview);
+document.getElementById('ruleFontStyle').addEventListener('change', updateRulePreview);
+
+// Swatch clicks
+document.getElementById('colorSwatches').addEventListener('click', e => {
+  const sw = e.target.closest('.swatch');
+  if (!sw) return;
+  if (sw.dataset.color === 'custom') return; // handled by color picker
+  selectedColor = sw.dataset.color;
+  document.querySelectorAll('.swatch').forEach(s => s.classList.toggle('active', s===sw));
+  updateRulePreview();
+});
+document.getElementById('ruleColorPicker').addEventListener('input', e => {
+  selectedColor = e.target.value;
+  document.querySelectorAll('.swatch').forEach(s => s.classList.remove('active'));
+  e.target.closest('.swatch').classList.add('active');
+  updateRulePreview();
+});
 
 window.saveRule = async function() {
   const txt = document.getElementById('ruleText').value.trim();
   if (!txt) { showToast('⚠️ Please enter a rule'); return; }
+  const ruleObj = {
+    text:      txt,
+    fontSize:  parseInt(document.getElementById('ruleFontSize').value),
+    fontStyle: document.getElementById('ruleFontStyle').value,
+    fontColor: selectedColor,
+    order:     editRuleKey ? (rulesData[editRuleKey]?.order || Date.now()) : Date.now()
+  };
   setSyncState('syncing');
   try {
     if (editRuleKey) {
-      await fbPut('rules/' + editRuleKey, { text: txt, order: rulesData[editRuleKey]?.order || Date.now() });
-      rulesData[editRuleKey] = { text: txt, order: rulesData[editRuleKey]?.order || Date.now() };
+      await fbPut('rules/' + editRuleKey, ruleObj);
+      rulesData[editRuleKey] = ruleObj;
     } else {
-      const order = Date.now();
-      const res = await fbPost('rules', { text: txt, order });
-      rulesData[res.name] = { text: txt, order };
+      const res = await fbPost('rules', ruleObj);
+      rulesData[res.name] = ruleObj;
     }
     setSyncState('online');
     closeModal('ruleModal');
@@ -805,6 +943,139 @@ window.deleteRule = function(key) {
     } catch(e) { setSyncState('error'); showToast('❌ Delete failed'); }
   });
 };
+
+// ════════════════════════════
+//  DRAG & DROP REORDER
+// ════════════════════════════
+let dragKey = null;
+
+window.onDragStart = function(e, key) {
+  dragKey = key;
+  e.dataTransfer.effectAllowed = 'move';
+  setTimeout(() => e.target.classList.add('dragging'), 0);
+};
+window.onDragEnd = function(e) {
+  e.target.classList.remove('dragging');
+  document.querySelectorAll('.rule-card').forEach(c => {
+    c.classList.remove('drag-over-top','drag-over-bottom');
+  });
+};
+window.onDragOver = function(e) {
+  e.preventDefault();
+  const card = e.currentTarget;
+  if (card.dataset.key === dragKey) return;
+  const rect = card.getBoundingClientRect();
+  const mid  = rect.top + rect.height / 2;
+  card.classList.toggle('drag-over-top',    e.clientY < mid);
+  card.classList.toggle('drag-over-bottom', e.clientY >= mid);
+};
+window.onDragLeave = function(e) {
+  e.currentTarget.classList.remove('drag-over-top','drag-over-bottom');
+};
+window.onDrop = async function(e, targetKey) {
+  e.preventDefault();
+  if (!dragKey || dragKey === targetKey) return;
+  const card = e.currentTarget;
+  const rect = card.getBoundingClientRect();
+  const insertBefore = e.clientY < rect.top + rect.height / 2;
+  card.classList.remove('drag-over-top','drag-over-bottom');
+
+  // Re-build order array
+  let entries = Object.entries(rulesData).sort((a,b) => (a[1].order||0)-(b[1].order||0));
+  const dragIdx   = entries.findIndex(([k])=>k===dragKey);
+  const targetIdx = entries.findIndex(([k])=>k===targetKey);
+  const [moved]   = entries.splice(dragIdx, 1);
+  const insertAt  = insertBefore ? targetIdx : targetIdx + 1;
+  entries.splice(insertAt > dragIdx ? insertAt - 1 : insertAt, 0, moved);
+
+  // Assign new order values and save
+  setSyncState('syncing');
+  try {
+    const updates = {};
+    entries.forEach(([k, r], i) => {
+      rulesData[k] = { ...r, order: i * 1000 };
+      updates[k] = rulesData[k];
+    });
+    await Promise.all(Object.entries(updates).map(([k,v]) => fbPut('rules/'+k, v)));
+    setSyncState('online');
+    renderRules();
+  } catch(err) { setSyncState('error'); showToast('❌ Reorder failed'); }
+  dragKey = null;
+};
+
+// ── Touch drag (mobile) ──
+let touchDragCard = null, touchClone = null, touchStartY = 0, touchLastY = 0;
+
+window.startTouchDrag = function(e, card) {
+  e.stopPropagation();
+  touchDragCard = card;
+  touchStartY = e.touches[0].clientY;
+  touchLastY  = touchStartY;
+  dragKey = card.dataset.key;
+
+  // Create floating clone
+  const rect = card.getBoundingClientRect();
+  touchClone = card.cloneNode(true);
+  touchClone.style.cssText = `position:fixed;left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;opacity:.85;z-index:999;pointer-events:none;border-left:3px solid var(--accent);background:var(--surface2);border-radius:8px;`;
+  document.body.appendChild(touchClone);
+  card.style.opacity = '.3';
+
+  document.addEventListener('touchmove', onTouchMove, { passive: false });
+  document.addEventListener('touchend',  onTouchEnd);
+};
+
+function onTouchMove(e) {
+  e.preventDefault();
+  if (!touchClone) return;
+  const dy = e.touches[0].clientY - touchStartY;
+  touchLastY = e.touches[0].clientY;
+  touchClone.style.transform = `translateY(${dy}px)`;
+
+  // Highlight card under finger
+  document.querySelectorAll('.rule-card').forEach(c => c.classList.remove('drag-over-top','drag-over-bottom'));
+  const el = document.elementFromPoint(e.touches[0].clientX, e.touches[0].clientY);
+  const target = el?.closest('.rule-card');
+  if (target && target !== touchDragCard) {
+    const rect = target.getBoundingClientRect();
+    target.classList.toggle('drag-over-top', touchLastY < rect.top + rect.height/2);
+    target.classList.toggle('drag-over-bottom', touchLastY >= rect.top + rect.height/2);
+  }
+}
+
+async function onTouchEnd(e) {
+  document.removeEventListener('touchmove', onTouchMove);
+  document.removeEventListener('touchend',  onTouchEnd);
+  if (!touchClone) return;
+  touchClone.remove(); touchClone = null;
+  if (touchDragCard) touchDragCard.style.opacity = '';
+
+  // Find drop target
+  const el = document.elementFromPoint(
+    e.changedTouches[0].clientX, e.changedTouches[0].clientY);
+  const target = el?.closest('.rule-card');
+  if (target && target !== touchDragCard) {
+    const rect = target.getBoundingClientRect();
+    const insertBefore = touchLastY < rect.top + rect.height/2;
+    const targetKey = target.dataset.key;
+    target.classList.remove('drag-over-top','drag-over-bottom');
+
+    let entries = Object.entries(rulesData).sort((a,b)=>(a[1].order||0)-(b[1].order||0));
+    const dragIdx   = entries.findIndex(([k])=>k===dragKey);
+    const targetIdx = entries.findIndex(([k])=>k===targetKey);
+    const [moved]   = entries.splice(dragIdx, 1);
+    const insertAt  = insertBefore ? targetIdx : targetIdx + 1;
+    entries.splice(insertAt > dragIdx ? insertAt-1 : insertAt, 0, moved);
+
+    setSyncState('syncing');
+    try {
+      entries.forEach(([k,r],i) => { rulesData[k] = {...r, order: i*1000}; });
+      await Promise.all(entries.map(([k,v]) => fbPut('rules/'+k, rulesData[k])));
+      setSyncState('online');
+    } catch(err) { setSyncState('error'); showToast('❌ Reorder failed'); }
+  }
+  touchDragCard = null; dragKey = null;
+  renderRules();
+}
 
 // ════════════════════════════
 //  TRADES
